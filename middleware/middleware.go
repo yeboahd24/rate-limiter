@@ -24,17 +24,13 @@ func RateLimiterMiddleware(ipLimiter *util.IPRateLimiter) func(http.Handler) htt
 				ip = host
 			}
 			log.Printf("Incoming request from IP %s", ip)
-			limiter := ipLimiter.GetLimiter(ip)
 
-			if !limiter.Allow() {
+			allowed, waitTime := ipLimiter.Allow(r.Context(), ip)
+			if !allowed {
 				log.Printf("Rate limit exceeded for IP: %s", r.RemoteAddr)
 
-				// Use the new method to get the wait time
-				waitTime := limiter.GetWaitTime()
-				waitTimeSeconds := int(waitTime.Seconds())
-
 				// Set the Retry-After header
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", waitTimeSeconds))
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", waitTime.Seconds()))
 
 				// Set the Content-Type header
 				w.Header().Set("Content-Type", "application/json")
@@ -42,8 +38,8 @@ func RateLimiterMiddleware(ipLimiter *util.IPRateLimiter) func(http.Handler) htt
 				// Create a custom response message
 				response := map[string]interface{}{
 					"error":             "Too many requests",
-					"retry_after":       waitTimeSeconds,
-					"retry_after_human": fmt.Sprintf("Please wait %d seconds before retrying.", waitTimeSeconds),
+					"retry_after":       int(waitTime.Seconds()),
+					"retry_after_human": fmt.Sprintf("Please wait %d seconds before retrying.", int(waitTime.Seconds())),
 				}
 
 				// Convert the response to JSON

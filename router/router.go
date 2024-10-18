@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-func SetupAuthRoutes(mux *http.ServeMux, authHandler *handler.AuthHandler) {
+func SetupAuthRoutes(mux *http.ServeMux, authHandler *handler.AuthHandler, redisAddr string) {
 	// Create a single IPRateLimiter for all routes
-	ipLimiter := util.NewIPRateLimiter(5, time.Minute)
+	ipLimiter := util.NewIPRateLimiter(redisAddr, 50, time.Minute)
 
 	// Apply rate limiting to all routes
 	applyMiddleware := func(h http.HandlerFunc) http.Handler {
@@ -22,5 +22,5 @@ func SetupAuthRoutes(mux *http.ServeMux, authHandler *handler.AuthHandler) {
 	mux.Handle("/login", http.HandlerFunc(authHandler.LoginHandler))
 
 	// Protected route with rate limiting and authentication
-	mux.Handle("/protected", applyMiddleware((authHandler.ProfileHandler)))
+	mux.Handle("/protected", applyMiddleware(authHandler.ProfileHandler))
 }

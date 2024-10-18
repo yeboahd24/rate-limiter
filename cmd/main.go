@@ -12,23 +12,24 @@ import (
 )
 
 func main() {
-	// Initialize SQLite database connection
+	// Load configuration from .env file
 	viper.SetConfigFile(".env")
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatal(err)
 	}
 
+	// Get Redis server address from configuration
+	redisAddr := viper.GetString("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379" // Use default Redis address if not set
+	}
+
+	// Create a new SQLite database connection
 	db, err := sql.Open("sqlite3", "./ratelimiter.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
-
-	// Create tables if they don't exist
-	err = createTables(db)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	// Create a new ServeMux
 	mux := http.NewServeMux()
@@ -36,8 +37,8 @@ func main() {
 	// Initialize your AuthHandler
 	authHandler := handler.NewAuthHandler(db)
 
-	// Setup auth routes
-	router.SetupAuthRoutes(mux, authHandler)
+	// Setup auth routes with Redis-based rate limiter
+	router.SetupAuthRoutes(mux, authHandler, redisAddr)
 
 	// Start the server
 	log.Println("Server starting on :8080")

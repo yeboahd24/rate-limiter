@@ -1,88 +1,69 @@
 package util
 
 import (
+	"context"
 	"log"
-	"sync"
 	"time"
+
+	"github.com/go-redis/redis/v8"
 )
 
 type IPRateLimiter struct {
-	ips        map[string]*TokenBucket
-	mu         sync.Mutex
-	max        int
-	refillRate time.Duration
+	redisClient *redis.Client
+	max         int
+	refillRate  time.Duration
 }
 
-func NewIPRateLimiter(max int, refillRate time.Duration) *IPRateLimiter {
+func NewIPRateLimiter(redisAddr string, max int, refillRate time.Duration) *IPRateLimiter {
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+
 	return &IPRateLimiter{
-		ips:        make(map[string]*TokenBucket),
-		max:        max,
-		refillRate: refillRate,
+		redisClient: redisClient,
+		max:         max,
+		refillRate:  refillRate,
 	}
 }
 
-func (i *IPRateLimiter) GetLimiter(ip string) *TokenBucket {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	limiter, exists := i.ips[ip]
-	if !exists {
-		log.Printf("Creating new limiter for IP: %s", ip)
-		limiter = NewTokenBucket(i.max, i.refillRate)
-		i.ips[ip] = limiter
+func (i *IPRateLimiter) Allow(ctx context.Context, ip string) (bool, time.Duration) {
+	key := "ratelimit:" + ip
+	count, err := i.redisClient.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("Error incrementing rate limit for IP %s: %v", ip, err)
+		return false, 0
 	}
 
-	return limiter
-}
+	if count > int64(i.max) {
+		ttl, err := i.redisClient.TTL(ctx, key).Result()
+		if err != nil {
+			log.Printf("Error getting TTL for IP %s: %v", ip, err)
+			return false, 0
+		}
 
-func NewTokenBucket(maxTokens int, refillRate time.Duration) *TokenBucket {
-	return &TokenBucket{
-		tokens:     maxTokens, // Start with max tokens to allow initial burst
-		maxTokens:  maxTokens,
-		refillRate: refillRate,
-		lastRefill: time.Now(),
-	}
-}
-
-type TokenBucket struct {
-	tokens     int
-	maxTokens  int
-	refillRate time.Duration
-	lastRefill time.Time
-	mu         sync.Mutex
-}
-
-func (tb *TokenBucket) Allow() bool {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-
-	now := time.Now()
-	elapsed := now.Sub(tb.lastRefill)
-	tokensToAdd := int(elapsed / tb.refillRate)
-
-	log.Printf("Tokens before refill: %d, Tokens to add: %d", tb.tokens, tokensToAdd)
-
-	if tokensToAdd > 0 {
-		tb.tokens = min(tb.tokens+tokensToAdd, tb.maxTokens)
-		tb.lastRefill = now
-		log.Printf("Refilled tokens. New token count: %d", tb.tokens)
+		log.Printf("Request denied for IP %s. Retry in %v", ip, ttl)
+		return false, ttl
 	}
 
-	if tb.tokens > 0 {
-		tb.tokens-- // Decrement the token count
-		log.Printf("Request allowed. Remaining tokens after decrement: %d", tb.tokens)
-		return true
+	// Set the expiration time for the key
+	_, err = i.redisClient.Expire(ctx, key, i.refillRate).Result()
+	if err != nil {
+		log.Printf("Error setting expiration for IP %s: %v", ip, err)
+		return false, 0
 	}
 
-	log.Printf("Request denied. No tokens remaining. Next token in %v", tb.refillRate-elapsed%tb.refillRate)
-	return false
+	log.Printf("Request allowed for IP %s", ip)
+	return true, i.refillRate
 }
 
-func (tb *TokenBucket) GetWaitTime() time.Duration {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-
-	elapsed := time.Since(tb.lastRefill)
-	waitTime := tb.refillRate - (elapsed % tb.refillRate)
-	return waitTime
+func (i *IPRateLimiter) ResetLimit(ctx context.Context, ip string) error {
+	key := "ratelimit:" + ip
+	_, err := i.redisClient.Del(ctx, key).Result()
+	if err != nil {
+		log.Printf("Error resetting rate limit for IP %s: %v", ip, err)
+		return err
+	}
+	return nil
 }
