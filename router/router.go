@@ -10,7 +10,7 @@ import (
 
 func SetupAuthRoutes(mux *http.ServeMux, authHandler *handler.AuthHandler, redisAddr string) {
 	// Create a single IPRateLimiter for all routes
-	ipLimiter := util.NewIPRateLimiter(redisAddr, 50, time.Minute)
+	ipLimiter := util.NewIPRateLimiter(redisAddr, 10, time.Minute)
 
 	// Apply rate limiting to all routes
 	applyMiddleware := func(h http.HandlerFunc) http.Handler {

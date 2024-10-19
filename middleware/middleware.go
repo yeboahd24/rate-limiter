@@ -30,7 +30,7 @@ func RateLimiterMiddleware(ipLimiter *util.IPRateLimiter) func(http.Handler) htt
 				log.Printf("Rate limit exceeded for IP: %s", r.RemoteAddr)
 
 				// Set the Retry-After header
-				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", waitTime.Seconds()))
+				w.Header().Set("X-Ratelimit-Retry-After", fmt.Sprintf("%.0f", waitTime.Seconds()))
 
 				// Set the Content-Type header
 				w.Header().Set("Content-Type", "application/json")
